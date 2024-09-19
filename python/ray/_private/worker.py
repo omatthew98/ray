@@ -2572,6 +2572,13 @@ def get(object_refs: "ObjectRef[R]", *, timeout: Optional[float] = None) -> R:
 
 
 @overload
+def get(
+    object_refs: Sequence[CompiledDAGRef], *, timeout: Optional[float] = None
+) -> List[Any]:
+    ...
+
+
+@overload
 def get(object_refs: CompiledDAGRef, *, timeout: Optional[float] = None) -> Any:
     ...
 
@@ -2579,7 +2586,12 @@ def get(object_refs: CompiledDAGRef, *, timeout: Optional[float] = None) -> Any:
 @PublicAPI
 @client_mode_hook
 def get(
-    object_refs: Union["ObjectRef[Any]", Sequence["ObjectRef[Any]"], CompiledDAGRef],
+    object_refs: Union[
+        "ObjectRef[Any]",
+        Sequence["ObjectRef[Any]"],
+        CompiledDAGRef,
+        Sequence[CompiledDAGRef],
+    ],
     *,
     timeout: Optional[float] = None,
 ) -> Union[Any, List[Any]]:
@@ -2624,8 +2636,9 @@ def get(
     Raises:
         GetTimeoutError: A GetTimeoutError is raised if a timeout is set and
             the get takes longer than timeout to return.
-        Exception: An exception is raised if the task that created the object
-            or that created one of the objects raised an exception.
+        Exception: An exception is raised immediately if any task that created
+            the object or that created one of the objects raised an exception,
+            without waiting for the remaining ones to finish.
     """
     worker = global_worker
     worker.check_connected()
@@ -2649,6 +2662,21 @@ def get(
 
         if isinstance(object_refs, CompiledDAGRef):
             return object_refs.get(timeout=timeout)
+
+        if isinstance(object_refs, list):
+            all_compiled_dag_refs = True
+            any_compiled_dag_refs = False
+            for object_ref in object_refs:
+                is_dag_ref = isinstance(object_ref, CompiledDAGRef)
+                all_compiled_dag_refs = all_compiled_dag_refs and is_dag_ref
+                any_compiled_dag_refs = any_compiled_dag_refs or is_dag_ref
+            if all_compiled_dag_refs:
+                return [object_ref.get(timeout=timeout) for object_ref in object_refs]
+            elif any_compiled_dag_refs:
+                raise ValueError(
+                    "Invalid type of object refs. 'object_refs' must be a list of "
+                    "CompiledDAGRefs if there is any CompiledDAGRef within it. "
+                )
 
         is_individual_id = isinstance(object_refs, ray.ObjectRef)
         if is_individual_id:
